@@ -1,0 +1,369 @@
+# MXR parking heater — Tier 2, full control (ESP32)
+#
+# Replaces the BT3L module. Commands go out on the Tuya UART; state comes back
+# from both the Tuya UART and the Modbus bus.
+#
+# Wiring:
+#   GND        -> GND
+#   GPIO16 RX  -> BT3L pad 15 (MCU TX)
+#   GPIO17 TX  -> BT3L pad 16 (MCU RX)
+#   GPIO25 RX  -> Modbus data pin
+#
+# Power the ESP separately; share only ground.
+
+substitutions:
+  name: mxr-heater
+  friendly: MXR Heater
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly}
+  on_boot:
+    priority: -100
+    then:
+      - delay: 2s
+      # restore select state while writes are still suppressed
+      - select.set:
+          id: mode_sel
+          option: !lambda |-
+            int m = id(g_mode);
+            if (m == 1) return std::string("AC");
+            if (m == 2) return std::string("Oil prime");
+            return std::string("Gear");
+      - select.set:
+          id: gear_sel
+          option: !lambda |-
+            switch (id(g_gear)) {
+              case 1: return std::string("P2");
+              case 2: return std::string("P3");
+              case 3: return std::string("P4");
+              case 4: return std::string("P5");
+              default: return std::string("P1");
+            }
+      - delay: 1s
+      - lambda: id(dp_suppress) = false;
+      # first boot only: put the heater into a known state
+      - if:
+          condition:
+            lambda: return !id(g_calibrated);
+          then:
+            - script.execute: calibrate
+            - lambda: id(g_calibrated) = true;
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  baud_rate: 115200
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+web_server:
+  port: 80
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "MXR Heater Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+# ------------------------------------------------------------------ UARTs ---
+uart:
+  - id: heater_uart          # Tuya MCU (55 AA), 9600 8N1
+    rx_pin: GPIO16
+    tx_pin: GPIO17
+    baud_rate: 9600
+  - id: modbus_uart          # Modbus RTU, listen only
+    rx_pin: GPIO25
+    baud_rate: 9600
+
+# ------------------------------------------------------------------- Tuya ---
+tuya:
+  uart_id: heater_uart
+  on_datapoint_update:
+    - sensor_datapoint: 1
+      datapoint_type: bool
+      then:
+        - lambda: |-
+            bool prev = id(dp_suppress);
+            id(dp_suppress) = true;
+            id(power_sw).publish_state(x);
+            id(dp_suppress) = prev;
+
+    - sensor_datapoint: 2
+      datapoint_type: int
+      then:
+        - lambda: |-
+            bool prev = id(dp_suppress);
+            id(dp_suppress) = true;
+            id(setpoint).publish_state((float) x);
+            id(dp_suppress) = prev;
+
+    - sensor_datapoint: 4
+      datapoint_type: enum
+      then:
+        - lambda: |-
+            bool prev = id(dp_suppress);
+            id(dp_suppress) = true;
+            id(g_mode) = x;
+            id(mode_sel).publish_state(x == 1 ? "AC" : (x == 2 ? "Oil prime" : "Gear"));
+            id(dp_suppress) = prev;
+
+    - sensor_datapoint: 5
+      datapoint_type: enum
+      then:
+        - lambda: |-
+            bool prev = id(dp_suppress);
+            id(dp_suppress) = true;
+            id(g_gear) = x;
+            id(gear_sel).publish_state(std::string("P") + std::to_string(x + 1));
+            id(dp_suppress) = prev;
+
+# ---------------------------------------------------------------- Globals ---
+globals:
+  - id: dp_suppress        # blocks outbound DP writes until boot completes
+    type: bool
+    restore_value: false
+    initial_value: 'true'
+  - id: g_mode             # 0 gear, 1 AC, 2 oil prime
+    type: int
+    restore_value: true
+    initial_value: '1'
+  - id: g_gear             # 0..4 -> P1..P5
+    type: int
+    restore_value: true
+    initial_value: '0'
+  - id: g_calibrated
+    type: bool
+    restore_value: true
+    initial_value: 'false'
+  - id: g_mode_before_prime
+    type: int
+    restore_value: false
+    initial_value: '1'
+
+# ---------------------------------------------------------------- Scripts ---
+script:
+  # Build and send one Tuya datapoint write.
+  #   dp   : datapoint id
+  #   type : 1 bool, 2 value, 4 enum
+  #   val  : value
+  - id: send_dp
+    mode: queued
+    parameters:
+      dp: int
+      type: int
+      val: int
+    then:
+      - lambda: |-
+          uint8_t len = (type == 2) ? 4 : 1;
+          uint8_t f[16];
+          f[0]=0x55; f[1]=0xAA; f[2]=0x00; f[3]=0x06;
+          f[4]=0x00; f[5]=4+len;
+          f[6]=(uint8_t)dp; f[7]=(uint8_t)type; f[8]=0x00; f[9]=len;
+          for (int i=0;i<len;i++) f[10+i] = ((uint32_t)val >> (8*(len-1-i))) & 0xFF;
+          uint8_t s=0; int n=10+len;
+          for (int i=0;i<n;i++) s+=f[i];
+          f[n]=s;
+          id(heater_uart).write_array(f, n+1);
+
+  # Known baseline: AC, gear P1, 18 C.
+  - id: calibrate
+    then:
+      - lambda: id(dp_suppress) = true;
+      - lambda: id(send_dp).execute(4, 4, 1);
+      - delay: 300ms
+      - lambda: id(send_dp).execute(5, 4, 0);
+      - delay: 300ms
+      - lambda: id(send_dp).execute(2, 2, 18);
+      - delay: 300ms
+      - lambda: |-
+          id(g_mode) = 1;
+          id(g_gear) = 0;
+          id(mode_sel).publish_state("AC");
+          id(gear_sel).publish_state("P1");
+          id(setpoint).publish_state(18.0);
+      - delay: 300ms
+      - lambda: id(dp_suppress) = false;
+
+  # Oil prime: run for N seconds, then restore the previous mode.
+  - id: prime
+    mode: restart
+    then:
+      - lambda: |-
+          id(g_mode_before_prime) = id(g_mode);
+          id(send_dp).execute(4, 4, 2);
+      - delay: !lambda |-
+          int s = (int) id(prime_secs).state;
+          if (s < 1) s = 30;
+          return (uint32_t) s * 1000;
+      - lambda: |-
+          id(send_dp).execute(4, 4, (int) id(g_mode_before_prime));
+          bool prev = id(dp_suppress);
+          id(dp_suppress) = true;
+          int m = id(g_mode_before_prime);
+          id(g_mode) = m;
+          id(mode_sel).publish_state(m == 1 ? "AC" : (m == 2 ? "Oil prime" : "Gear"));
+          id(dp_suppress) = prev;
+
+# --------------------------------------------------------------- Entities ---
+switch:
+  - platform: template
+    name: "Heater Power"
+    id: power_sw
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - lambda: |-
+          if (id(dp_suppress)) return;
+          id(send_dp).execute(1, 1, 1);
+    turn_off_action:
+      - lambda: |-
+          if (id(dp_suppress)) return;
+          id(send_dp).execute(1, 1, 0);
+
+number:
+  - platform: template
+    name: "Setpoint"
+    id: setpoint
+    min_value: 8
+    max_value: 36
+    step: 1
+    optimistic: true
+    restore_value: true
+    on_value:
+      - lambda: |-
+          if (id(dp_suppress)) return;
+          id(send_dp).execute(2, 2, (int) x);
+
+  - platform: template
+    name: "Prime Duration"
+    id: prime_secs
+    min_value: 1
+    max_value: 300
+    step: 1
+    optimistic: true
+    restore_value: true
+
+select:
+  - platform: template
+    name: "Mode"
+    id: mode_sel
+    optimistic: true
+    options: ["Gear", "AC", "Oil prime"]
+    on_value:
+      - lambda: |-
+          int v = 0;
+          if (x == "AC") v = 1;
+          else if (x == "Oil prime") v = 2;
+          id(g_mode) = v;
+          if (id(dp_suppress)) return;
+          id(send_dp).execute(4, 4, v);
+
+  - platform: template
+    name: "Gear"
+    id: gear_sel
+    optimistic: true
+    options: ["P1", "P2", "P3", "P4", "P5"]
+    on_value:
+      - lambda: |-
+          int v = 0;
+          if (x == "P2") v = 1;
+          else if (x == "P3") v = 2;
+          else if (x == "P4") v = 3;
+          else if (x == "P5") v = 4;
+          id(g_gear) = v;
+          if (id(dp_suppress)) return;
+          id(send_dp).execute(5, 4, v);
+
+button:
+  - platform: template
+    name: "Calibrate Heater"
+    icon: mdi:tune
+    on_press:
+      - script.execute: calibrate
+
+  - platform: template
+    name: "Prime Oil"
+    icon: mdi:oil
+    on_press:
+      - script.execute: prime
+
+  - platform: template
+    name: "Stop Prime"
+    icon: mdi:stop
+    on_press:
+      - script.stop: prime
+      - lambda: id(send_dp).execute(4, 4, (int) id(g_mode_before_prime));
+
+# Known for this product from a third-party mapping; may stay empty until the
+# burner is attached and actually reports.
+sensor:
+  - platform: tuya
+    name: "Current Temperature"
+    sensor_datapoint: 3
+    unit_of_measurement: "°C"
+    accuracy_decimals: 0
+
+text_sensor:
+  - platform: tuya
+    name: "Work State"
+    sensor_datapoint: 6
+
+# ----------------------------------------------------------------- Modbus ---
+interval:
+  - interval: 25ms
+    then:
+      - lambda: |-
+          static std::vector<uint8_t> buf;
+          static uint32_t last = 0;
+          uint8_t b;
+          while (id(modbus_uart).available() > 0 && id(modbus_uart).read_byte(&b)) {
+            buf.push_back(b);
+            last = millis();
+          }
+          if (buf.empty() || millis() - last <= 20) return;
+
+          // 01 10 30 00 00 04 08 | gear/mode/power | setpoint+16 | ...
+          for (size_t i = 0; i + 16 < buf.size(); i++) {
+            if (buf[i] == 0x01 && buf[i+1] == 0x10 &&
+                buf[i+2] == 0x30 && buf[i+3] == 0x00 &&
+                buf[i+4] == 0x00 && buf[i+5] == 0x04 && buf[i+6] == 0x08) {
+
+              uint8_t st   = buf[i+7];
+              uint8_t gear = (st >> 4) & 0x0F;
+              uint8_t m    = st & 0x0F;
+              bool power   = (m & 0x01) != 0;
+              uint8_t code = (m >> 1) & 0x03;
+              int temp     = (int) buf[i+8] - 16;
+
+              const char *ms = (code == 0) ? "AC" : (code == 1 ? "Oil prime" : "Gear");
+              ESP_LOGI("modbus", "gear=P%u mode=%s power=%s setpoint=%dC",
+                       gear, ms, power ? "ON" : "OFF", temp);
+
+              bool prev = id(dp_suppress);
+              id(dp_suppress) = true;
+              id(power_sw).publish_state(power);
+              id(g_gear) = gear - 1;
+              id(g_mode) = (code == 0) ? 1 : (code == 1 ? 2 : 0);
+              id(mode_sel).publish_state(ms);
+              id(gear_sel).publish_state(std::string("P") + std::to_string(gear));
+              id(setpoint).publish_state((float) temp);
+              id(dp_suppress) = prev;
+              break;
+            }
+          }
+
+          buf.clear();
