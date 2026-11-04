@@ -27,21 +27,24 @@ ESP32 UART2 defaults to 16/17, so this costs no extra configuration.
 
 `esphome/mxr-esp32-control.yaml`
 
-On first boot the ESP waits for WiFi, restores its stored state, and — if it has
-never been calibrated — runs a calibration: **mode AC, gear P1, 18 °C**.
+On first boot the ESP waits for WiFi, restores its stored state, then follows the
+controller.
 
-## 4. Calibrate once
+## 4. State model
 
-The controller cannot be asked for its state (its "read all" reply is malformed),
-so the ESP keeps its own copy. Calibration puts the heater into a known state,
-after which everything tracks.
-
-Press **Calibrate Heater** in HA, or let it run on first boot. After that:
+No calibration step is needed. The controller mirrors its state onto the Modbus
+bus, so the ESP learns where the heater actually is instead of imposing a
+baseline.
 
 - panel changes → Tuya DP report + Modbus mirror → ESP updates
 - HA changes → Tuya DP write → controller applies → Modbus mirror confirms
 - ESP reboot → last state restored from flash, nothing transmitted until boot
-  completes
+  completes, then corrected by the next Modbus frame or DP report
+
+**Mode naming:** the two running modes are exposed as **Manual** (gear-based,
+you pick P1–P5) and **Auto** (thermostat, you pick a temperature). On the wire
+these are mode codes 2 and 0 respectively — the same values the app calls
+"gear" and "AC".
 
 ## Why writes are suppressed at boot
 

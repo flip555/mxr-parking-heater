@@ -39,9 +39,9 @@ byte 1 (0x3000 low)  : setpoint + 16
 
 | mode | meaning |
 |---|---|
-| 0 | AC / thermostat |
+| 0 | AC / thermostat (UI: **Auto**) |
 | 1 | manual oil prime |
-| 2 | gear |
+| 2 | gear (UI: **Manual**) |
 
 Full low nibble:
 

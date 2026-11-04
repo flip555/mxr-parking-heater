@@ -114,10 +114,9 @@ Step-by-step: [Tier 1](docs/tier1-monitor.md) · [Tier 2](docs/tier2-control.md)
 
 ## What works
 
-- Power on/off, mode (AC / Gear / Oil prime), gear P1–P5, setpoint
+- Power on/off, mode (Manual / Auto / Oil prime), gear P1–P5, setpoint
 - State survives ESP reboots (globals + flash)
 - State corrections from both the panel and the Tuya bus
-- Calibration routine that returns the heater to a known baseline
 - Modbus decoder for every controller state change
 
 ## Unknowns

@@ -44,7 +44,7 @@ the module removed, an ESP32 speaks it directly.
 | 1 | bool | power | `0` / `1` |
 | 2 | value | setpoint | 4-byte big-endian, °C, no scaling |
 | 3 | value | current temperature | known from third-party mapping, not yet observed |
-| 4 | enum | function | `0` gear, `1` AC/thermostat, `2` manual oil prime |
+| 4 | enum | function | `0` gear (UI: Manual), `1` AC/thermostat (UI: Auto), `2` oil prime |
 | 5 | enum | gear | `0`–`4` → panel P1–P5 |
 | 6 | enum | work state | values unknown |
 | 7 | enum | temp unit convert | unknown |
