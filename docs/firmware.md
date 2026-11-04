@@ -120,6 +120,44 @@ registers are two views of one state machine.
 Notably **absent**: DP6 and DP7, which a third-party mapping claims are work state
 and temperature unit. This firmware does not implement them.
 
+## Report-all map (FUN_000046b0)
+
+Every DP the controller reports, and the variable behind it:
+
+```c
+FUN_00005280(1,    DAT_100001a4);   // DP1  bool    power
+FUN_000053fc(2,    DAT_100001a6);   // DP2  value   setpoint
+FUN_000053fc(3,    DAT_100001cc);   // DP3  value   see note
+FUN_000052e4(4,    DAT_100001a5);   // DP4  enum    mode
+FUN_000052e4(5,    DAT_100001a9);   // DP5  enum    gear
+FUN_000052e4(0xb,  DAT_10000186);   // DP11 enum    work state
+FUN_000052e4(0xd,  1);              // DP13 enum    constant 1
+FUN_00005338(0x15, _DAT_100001a0);  // DP21 bitmap  fault flags
+```
+
+Payload builders:
+
+| Helper | Frame |
+|---|---|
+| `FUN_00005280` | type 1, len 1 |
+| `FUN_000053fc` | type 2, len 4, big-endian |
+| `FUN_000052e4` | type 4, len 1 |
+| `FUN_00005338` | type 5, variable length |
+
+**DP21 is the fault bitmap** — the menu code tests its bits one at a time
+(`&1`, `&2`, `&4`, `&8`, `&0x10`, `&0x20`, `&0x40`, `&0x80`, `&0x100`, `&0x200`,
+`&0x800` …) to choose which error message to display.
+
+**DP11 is work state** — compared against `3` in the same menu logic.
+
+**DP13 is a constant `1`** in the report path, so it signals presence/readiness
+rather than carrying a value.
+
+**DP3 is ambiguous.** Its variable `DAT_100001cc` is written from the setpoint
+variable (`DAT_100001cc = DAT_100001a6`) in one path and zeroed at init in
+another. That is either a display mirror of the setpoint or a decompiler
+conflation of two distinct addresses. Not resolved.
+
 ## Still open
 
 - **The 14 registers at `0x4000`.** The poll is confirmed, but the reply parser
