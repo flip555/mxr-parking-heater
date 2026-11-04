@@ -32,8 +32,13 @@ Tuya datapoint write).
 
 ```
 byte 0 (0x3000 high) : gear << 4 | (mode << 1) | power
-byte 1 (0x3000 low)  : setpoint + 16
+byte 1 (0x3000 low)  : flag << 5 | (setpoint + 16)
 ```
+
+Confirmed from the controller firmware (`FUN_000031f8`), which builds these very
+bytes — see [firmware.md](firmware.md). Note bit 5 of the low byte is a separate
+flag that is zero in all captured traffic; a decoder should mask it rather than
+relying on plain subtraction.
 
 `mode` is 2 bits:
 
