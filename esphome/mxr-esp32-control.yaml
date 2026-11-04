@@ -54,6 +54,9 @@ esp32:
   board: esp32dev
   framework:
     type: esp-idf
+    advanced:
+      minimum_chip_revision: "3.1"   # reported by ESP32 rev 3.x
+      sram1_as_iram: true             # ~40 KB more IRAM; matters with 2 UARTs + WiFi
 
 logger:
   baud_rate: 115200
@@ -210,6 +213,7 @@ script:
           if (s < 1) s = 30;
           return (uint32_t) s * 1000;
       - lambda: |-
+          if (id(g_mode) != 2) return;   // already left prime; leave the user's choice alone
           id(send_dp).execute(4, 4, (int) id(g_mode_before_prime));
           bool prev = id(dp_suppress);
           id(dp_suppress) = true;
@@ -306,7 +310,9 @@ button:
     icon: mdi:stop
     on_press:
       - script.stop: prime
-      - lambda: id(send_dp).execute(4, 4, (int) id(g_mode_before_prime));
+      - lambda: |-
+          if (id(g_mode) != 2) return;
+          id(send_dp).execute(4, 4, (int) id(g_mode_before_prime));
 
 # Known for this product from a third-party mapping; may stay empty until the
 # burner is attached and actually reports.

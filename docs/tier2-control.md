@@ -61,3 +61,29 @@ previous setting when stopped.
 Put the **Tuya bus on the hardware UART** and Modbus on software serial. Modbus is
 the forgiving one — 1 Hz, short frames, CRC-checked — so a dropped frame costs one
 second, not a failed command.
+
+## Surprising behaviours
+
+Observed on hardware; worth knowing before you file a bug.
+
+**Oil prime ends by itself.** The controller terminates prime after roughly one to
+four seconds, without being asked. It is a function with its own timeout, not a
+mode you hold open. The "Prime Duration" timer is therefore a *backstop*: if the
+controller has already left prime, the timer does nothing.
+
+**The restore is guarded.** If the mode changes while the prime timer is running —
+whether the controller returned on its own or you picked something in HA — the
+restore is skipped, so a late timer can never override your choice.
+
+**Mode and setpoint survive power-off.** The controller keeps its mode while the
+power switch is off (`P1 AC 25C OFF` is a valid state, not a contradiction), which
+is why the Modbus decode reports mode and power separately.
+
+**Each change publishes twice.** The Tuya DP report arrives first and the Modbus
+mirror ~100 ms later, so HA history shows the same state twice. Both are correct;
+it is redundant, not a race.
+
+**Nothing is transmitted for the first ~3 seconds after boot.** Template entities
+publish their restored state during setup, and that would otherwise send datapoint
+writes and stomp the heater back to whatever the ESP remembered. `dp_suppress`
+starts `true` and is cleared once the static state has been published.
