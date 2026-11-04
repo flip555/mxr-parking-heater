@@ -336,7 +336,6 @@ binary_sensor:
     name: "Fault Active"
     id: fault_active
     device_class: problem
-    update_interval: never
 
 # ----------------------------------------------------------------- Modbus ---
 interval:
