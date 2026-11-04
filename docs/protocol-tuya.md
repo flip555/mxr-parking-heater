@@ -43,11 +43,23 @@ the module removed, an ESP32 speaks it directly.
 |---|---|---|---|
 | 1 | bool | power | `0` / `1` |
 | 2 | value | setpoint | 4-byte big-endian, °C, no scaling |
-| 3 | value | current temperature | known from third-party mapping, not yet observed |
+| 3 | value | current temperature (presumed) | never observed; present in the firmware table |
 | 4 | enum | function | `0` gear (UI: Manual), `1` AC/thermostat (UI: Auto), `2` oil prime |
 | 5 | enum | gear | `0`–`4` → panel P1–P5 |
-| 6 | enum | work state | values unknown |
-| 7 | enum | temp unit convert | unknown |
+| 11 | enum | unknown — work state or similar | not yet observed |
+| 13 | enum | unknown — likely fault/status | not yet observed |
+| 21 | bitmap | unknown — likely fault flags | not yet observed |
+
+**Source of truth:** the firmware's own table at flash `0x59aa`, eight entries of
+`[id, type]`, read with a per-DP dispatcher (`FUN_00004cf0`). A third-party Tuya
+BLE mapping claimed DP6 (work state) and DP7 (temp unit); **neither exists in this
+firmware**. Treat 11/13/21 as the real unknowns.
+
+Confirmed mappings from `FUN_00004da4` / `FUN_00004d58`:
+
+- DP4 `0→gear, 1→AC, 2→oil` maps to internal `a5` as `2, 0, 1` — the same
+  encoding the Modbus state word uses
+- DP5 `n` stores gear as `n + 1`, i.e. the P-number in the Modbus high nibble
 
 DP type values: `0` raw, `1` bool, `2` value, `3` string, `4` enum, `5` bitmap.
 

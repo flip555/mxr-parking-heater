@@ -91,6 +91,35 @@ if (DAT_100001a6 < 0x1e) { DAT_100001a6++; ... }  // setpoint: increments below 
 That independently confirms the five-gear range, and suggests the firmware clamps
 the setpoint around 30 °C on that path — narrower than the 8–36 the app exposes.
 
+## Datapoint table (flash 0x59aa)
+
+Eight `[id, type]` pairs, indexed by `FUN_00004f20`, validated and dispatched by
+`FUN_00004c20` / `FUN_00004cf0`:
+
+| DP | Type | Handler |
+|---|---|---|
+| 1 | bool | `FUN_00004e4c` |
+| 2 | value | `FUN_00004ea0` |
+| 3 | value | — |
+| 4 | enum | `FUN_00004da4` |
+| 5 | enum | `FUN_00004d58` |
+| 11 | enum | — |
+| 13 | enum | `FUN_00004ecc` |
+| 21 | bitmap | — |
+
+Handler behaviour confirms the state model:
+
+```c
+// DP4: 0 -> a5=2 (gear), 1 -> a5=0 (AC), 2 -> a5=1 (oil)
+// DP5: a8 = value + 1        // gear stored as P-number
+```
+
+Those are the same variables the Modbus packer reads, so Tuya DPs and Modbus
+registers are two views of one state machine.
+
+Notably **absent**: DP6 and DP7, which a third-party mapping claims are work state
+and temperature unit. This firmware does not implement them.
+
 ## Still open
 
 - **The 14 registers at `0x4000`.** The poll is confirmed, but the reply parser
