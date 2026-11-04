@@ -231,7 +231,6 @@ number:
     step: 1
     optimistic: true
     restore_value: true
-    entity_category: config
     icon: mdi:timer-outline
 
 select:
@@ -269,14 +268,12 @@ button:
   - platform: template
     name: "Prime Start"
     icon: mdi:oil
-    entity_category: config
     on_press:
       - script.execute: prime
 
   - platform: template
     name: "Prime Stop"
     icon: mdi:stop
-    entity_category: config
     on_press:
       - script.stop: prime
       - lambda: |-
