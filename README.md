@@ -1,142 +1,138 @@
 # MXR Parking Heater — ESPHome bridge
 
-Local control and monitoring for a **MaXpeedingRods (MXR) Tuya parking heater**
-without the phone app, the cloud, or the original BLE module.
+Turn a **MaXpeedingRods (MXR) Tuya parking heater** into a local Home Assistant
+device: no phone app, no cloud, no vendor account.
 
-The heater controller is a Tuya MCU device. The factory BT3L module is only a
-BLE-to-UART bridge, so an ESP32 can take its place on the UART and speak the same
-protocol. A second, simpler bus (Modbus RTU) exposes the heater's live state.
+An ESP32 replaces the heater's BLE module and speaks both of its internal buses —
+so you get real control *and* real telemetry, entirely on your own network.
 
-> Status: working on hardware. Control, state mirroring and persistence are
-> verified. The burner telemetry block is documented but **not yet mapped** —
-> see [Unknowns](#unknowns).
+> Built and tested against the MXR / MaXpeedingRods heater with product key
+> `vmdizama`. Other Tuya heaters may speak the same protocol but will have a
+> different datapoint map.
 
 ---
 
-## Two ways to use this
+## What you get
 
-| | Tier 1 — Monitor | Tier 2 — Full control |
+**Control**
+
+- Power on / off
+- **Manual** mode — pick a power level, P1–P5
+- **Auto** mode — pick a target temperature and let the heater modulate
+- Setpoint from 8–36 °C
+- Oil prime, with a configurable backstop timer
+- Every change confirmed by the heater itself, not assumed
+
+**Monitoring**
+
+- Live power, mode, gear and setpoint
+- Current temperature and work state *(once a burner is fitted — see Status)*
+- Burner telemetry block, 1 Hz *(documented, not yet mapped)*
+
+**Behaviour that matters**
+
+- **Survives reboots** — the last state is restored from flash and nothing is
+  transmitted until boot completes, so the heater is never stomped on restart
+- **Follows the panel** — press a button on the heater and Home Assistant updates
+  within a second
+- **Follows Home Assistant** — command it and the heater applies it and confirms
+- **Fully local** — Tuya frames and Modbus on the wire, ESPHome on your LAN. No
+  internet, no account, no app
+
+---
+
+## Two ways to install
+
+| | **Monitor only** | **Full control** |
 |---|---|---|
-| Soldering | **none** | BT3L module removed |
+| Soldering | none | remove the BLE module |
 | Wires | 3 | 4 |
-| Control from HA | ✗ | ✓ |
-| State + telemetry | ✓ | ✓ |
-| Difficulty | beginner | intermediate |
+| Hardware | D1 mini is plenty | ESP32 recommended |
+| Control from HA | — | yes |
+| State + telemetry | yes | yes |
 
-Start with Tier 1. It needs no disassembly and proves the wiring before you
-commit to removing anything.
-
----
-
-## How it works
-
-```
-                 ┌──────────────┐
-   phone app ────┤  BT3L (BLE)  │   ← removed in Tier 2
-                 └──────┬───────┘
-                        │ UART 55AA (Tuya MCU protocol)
-  ESP32 ────────────────┤
-                        │
-                 ┌──────┴───────┐
-                 │ ME32F031C8T6 │  heater controller
-                 └──────┬───────┘
-                        │ single-wire UART, Modbus RTU
-                 ┌──────┴───────┐
-                 │    burner    │  fan, pump, flame, probes
-                 └──────────────┘
-```
-
-Two independent paths to the same state:
-
-- **Tuya MCU protocol** (`55 AA …`) — how you *change* settings. Datapoint writes.
-- **Modbus RTU** — how you *read* state. The controller polls its burner once a
-  second and mirrors every state change onto the bus.
-
-Neither bus can read the full state on demand: the Tuya "read all" reply on this
-firmware is malformed, and the Modbus poll is only answered by a connected
-burner. The ESP therefore keeps its own persisted copy and treats both buses as
-corrections.
-
-Details: [Tuya protocol](docs/protocol-tuya.md) ·
-[Modbus protocol](docs/protocol-modbus.md)
-
----
-
-## Hardware
-
-- **Controller:** ME32F031C8T6 (MESILICON, Cortex-M0)
-- **BLE module:** Tuya BT3L (TLSR8250) — removed for Tier 2
-- **Recommended bridge:** any ESP32 (2+ hardware UARTs)
-- **Also works:** ESP8266 / D1 mini for Tier 1 (single UART is enough)
-
-Full teardown, pinouts and removal notes: [docs/hardware.md](docs/hardware.md)
+Start with monitor-only. It proves the wiring before you commit to removing
+anything, and it is the more reliable build because it needs only one UART.
 
 ---
 
 ## Quick start
 
-### Tier 1 — monitor only
+1. **Wire it** — 3 wires for monitoring, 4 for control.
+2. **Flash it** — `esphome/d1mini-modbus-monitor.yaml` or
+   `esphome/mxr-esp32-control.yaml` from this repo.
+3. **Add it** — the device appears in Home Assistant via ESPHome.
 
-Wire to the 3-pin connector between controller and burner:
+Full instructions, photos and pitfalls: **[the wiki](https://github.com/flip555/mxr-parking-heater/wiki)**.
 
-| ESP | Heater |
+| Page | |
 |---|---|
-| GND | GND |
-| RX (GPIO3 on a D1 mini) | data |
-| 3V3 | VCC *(optional — see caveat)* |
-
-Flash [`esphome/d1mini-modbus-monitor.yaml`](esphome/d1mini-modbus-monitor.yaml).
-
-You get power, mode, gear and setpoint, decoded from the controller's own
-Modbus writes — plus the burner's telemetry once one is attached.
-
-### Tier 2 — full control
-
-Remove the BT3L module, then:
-
-| ESP32 | Heater |
-|---|---|
-| GND | GND |
-| GPIO16 (RX) | BT3L pad 15 — MCU TX |
-| GPIO17 (TX) | BT3L pad 16 — MCU RX |
-| GPIO25 (RX) | Modbus data |
-| 3V3 | VCC *(see caveat)* |
-
-Flash [`esphome/mxr-esp32-control.yaml`](esphome/mxr-esp32-control.yaml).
-
-Step-by-step: [Tier 1](docs/tier1-monitor.md) · [Tier 2](docs/tier2-control.md)
-
-> **Power caveat:** the controller's 3.3 V rail is sized for a BT3L (~25 mA).
-> An ESP32 peaks far higher. Power the ESP separately and share only ground
-> unless you have measured the rail under load.
+| [Wiring](https://github.com/flip555/mxr-parking-heater/wiki/Wiring) | pin by pin, both builds |
+| [Tier 1 — Monitor](https://github.com/flip555/mxr-parking-heater/wiki/Tier-1-Monitor) | three wires, no soldering |
+| [Tier 2 — Control](https://github.com/flip555/mxr-parking-heater/wiki/Tier-2-Control) | module removal and full control |
+| [Troubleshooting](https://github.com/flip555/mxr-parking-heater/wiki/Troubleshooting) | silent bus, resets, brownouts |
+| [FAQ](https://github.com/flip555/mxr-parking-heater/wiki/FAQ) | scope, safety, why it works this way |
 
 ---
 
-## What works
+## Requirements
 
-- Power on/off, mode (Manual / Auto / Oil prime), gear P1–P5, setpoint
-- State survives ESP reboots (globals + flash)
-- State corrections from both the panel and the Tuya bus
-- Modbus decoder for every controller state change
-
-## Unknowns
-
-- **Burner telemetry (`0x4000`, 14 registers)** — the block exists and is polled
-  at 1 Hz, but is only answered when a burner is attached. Not yet mapped.
-- **Tuya read-all (`0x08`)** — returns one DP1 report plus a fixed malformed
-  frame. The `0x10` (obtain DP cache) command is not implemented by this
-  firmware.
-- Current-temperature and work-state DPs are known for this product from a
-  third-party Tuya BLE mapping (DP3 and DP6) but have not been observed here.
+- MaXpeedingRods / MXR Tuya parking heater (product key `vmdizama`)
+- ESP32 (control) or ESP8266 / D1 mini (monitor)
+- ESPHome 2025.x or newer
+- Home Assistant, if you want the entities — the firmware runs standalone too
 
 ---
 
-## References
+## Status
 
-- Product key: `vmdizama`, firmware `1.0.0`
-- Tuya MCU serial protocol (public SDK)
-- Modbus RTU specification
+**Working:** power, mode, gear, setpoint, state persistence, state correction from
+both the panel and Home Assistant, oil prime, and a Modbus decoder for every
+controller state change.
+
+**Not yet:** the burner telemetry block. The controller polls 14 registers at
+`0x4000` once a second, but nothing answers until a burner is attached — so those
+registers are documented as *unknown* rather than guessed.
+
+**Also missing:** current temperature and work state datapoints. They exist and
+are mapped from a third-party source, but have not been observed on hardware here.
+
+---
+
+## How it works, briefly
+
+The heater's controller is a Tuya MCU device. Its BT3L module is only a
+BLE-to-UART bridge, so an ESP can take its place on the same UART. Separately, the
+controller talks Modbus RTU to the burner over a single wire, and mirrors every
+settings change onto that bus.
+
+So: **Tuya for commands, Modbus for state.** The ESP keeps its own copy of the
+state and treats both buses as corrections, because this firmware has no working
+"read everything" command.
+
+Technical detail — frame formats, datapoint ids, register bitfields, and the
+documented read-all bug — lives in [`docs/`](docs/) and on the wiki. This README
+stays about what the thing *does*.
+
+---
+
+## Repository layout
+
+```
+esphome/     ready-to-flash configs (monitor + control)
+docs/        protocol reference: Tuya, Modbus, hardware teardown
+wiki         setup guides, troubleshooting, FAQ
+```
+
+---
+
+## Contributing
+
+The most useful thing you can send is a **capture**: raw frames plus what the
+panel was showing at that moment. That is how the register map gets finished.
+
+---
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+MIT.
