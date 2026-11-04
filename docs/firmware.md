@@ -158,6 +158,50 @@ variable (`DAT_100001cc = DAT_100001a6`) in one path and zeroed at init in
 another. That is either a display mirror of the setpoint or a decompiler
 conflation of two distinct addresses. Not resolved.
 
+## Persisted settings (0x1000028c)
+
+| Address | Variable | Range / behaviour |
+|---|---|---|
+| `0x1000028c` | `b6` | 0/1 |
+| `0x10000290` | `b8` | 0/1 |
+| `0x10000294` | `a9` | gear, 0–4 (clamped) |
+| `0x10000298` | `b9` | 0–2 |
+| `0x1000029c` | `c4` | identity check with `0x2a0`/`0x2a4` |
+
+Loaded into working variables at boot (`0x3242`) and written back on change
+(`0x1636`). `a9` being the gear confirms DP5 and the Modbus high nibble are the
+same value in two representations.
+
+Menu clamps (`FUN_00003828`): setpoint stops below `0x1e` (**30 °C**), gear below
+`5`, `b9` at `2`.
+
+## DP21 fault codes
+
+Bitmap → fault index, in priority order:
+
+| Bit | Code |
+|---|---|
+| 0x1 | 1 |
+| 0x2 | 2 |
+| 0x4 | 3 |
+| 0x8 | 4 |
+| 0x10 | 5 |
+| 0x20 | 6 |
+| 0x40 | 7 |
+| 0x800 | 8 |
+| 0x80 | 11 |
+| 0x100 | 9 |
+| 0x200 | 10 |
+
+`0x800` outranks `0x80` deliberately — vendor priority order.
+
+## Timers (FUN_00001e4c)
+
+`_DAT_10000016` increments and wraps at 59,999 (a 60,000-count cycle). The same
+function drives LCD icon bits and segment values, then refreshes the display, so
+it is the UI/status housekeeping path. Tick rate not proven, so no wall-clock
+claim.
+
 ## Still open
 
 - **The 14 registers at `0x4000`.** The poll is confirmed, but the reply parser
