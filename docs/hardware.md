@@ -50,6 +50,34 @@ The module is 16 × 24 mm, 16 pins.
 VDD (8) and GND (9) are adjacent — use that pair to orient the module, then count
 to 15/16.
 
+### Footprint orientation (measured on a real board)
+
+Pad numbering runs **counter-clockwise**, not the corner-to-corner way it first
+appears:
+
+```
+top row    16  15  14  13  12  11  10   9     9  = GND
+            .   .   .   .   .   .   .   .
+           +----+----+----+----+----+----+----+
+           |  B T 3 L   m o d u l e   f o o t  |
+           +----+----+----+----+----+----+----+
+            .   .   .   .   .   .   .   .
+bottom row  1   2   3   4   5   6   7   8     8  = VDD (3.3 V measured)
+```
+
+- **8** VDD (3.3 V, confirmed with a meter against the PSU rail)
+- **9** GND
+- **15** UART RX — from the MCU
+- **16** UART TX — to the MCU
+
+That places VDD and GND diagonally adjacent at the right-hand end, which is the
+anchor for orienting a replacement.
+
+### SWD
+
+**PA13 = SWDIO**, **PA14 = SWCLK**, both brought out to test points. Handy for
+re-dumping or recovering the board without hunting for a header.
+
 Direction matters:
 
 - pin 15 receives **from the MCU** → this net is MCU TX
