@@ -100,6 +100,11 @@ globals:
     restore_value: false
     initial_value: '0'
 
+  - id: mb_suppress
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
 # ---------------------------------------------------------------- Scripts ----
 script:
   - id: send_dp
@@ -277,7 +282,7 @@ number:
     unit_of_measurement: "°C"
     on_value:
       - lambda: |-
-          if (id(dp_suppress)) return;
+          if (id(dp_suppress) || id(mb_suppress)) return;
           id(pending_val) = (int) x;
       - script.execute:
           id: send_dp
@@ -368,13 +373,6 @@ sensor:
     icon: mdi:alert-outline
     update_interval: never
 
-  - platform: template
-    name: "Setpoint (state)"
-    id: setpoint
-    unit_of_measurement: "°C"
-    accuracy_decimals: 0
-    update_interval: never
-
 text_sensor:
   - platform: template
     name: "Work State"
@@ -424,7 +422,9 @@ interval:
               ESP_LOGI("modbus", "gear=P%u mode=%s power=%s setpoint=%dC",
                        gear, ms, power ? "ON" : "OFF", temp);
 
-              id(setpoint).publish_state((float) temp);
+              id(mb_suppress) = true;
+              id(setpoint_n).publish_state((float) temp);
+              id(mb_suppress) = false;
               break;
             }
           }
