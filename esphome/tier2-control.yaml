@@ -1,17 +1,16 @@
 # MXR parking heater — Tier 2, full control (ESP32)
 #
-# The BT3L module is removed and the ESP takes over the Tuya MCU UART, so this
-# tier can switch modes precisely. Modbus is still read for state confirmation.
+# BT3L removed; the ESP owns the Tuya MCU UART. Modbus is read for confirmation.
 #
 # Wiring:
-#   GND         -> GND
-#   GPIO16 RX   -> BT3L pad 15
-#   GPIO17 TX   -> BT3L pad 16
-#   GPIO25 RX   -> Modbus data pin
+#   GND        -> GND
+#   GPIO16 RX  -> BT3L pad 15
+#   GPIO17 TX  -> BT3L pad 16
+#   GPIO25 RX  -> Modbus data pin
 #
-# Datapoints (confirmed from the controller firmware):
-#   1 power, 2 setpoint, 3 current temp, 4 mode, 5 gear,
-#   11 work state, 13 constant, 21 fault bitmap
+# Loop protection: entities only transmit when the requested value differs from
+# the last value the controller reported. Publishing incoming state into an
+# entity therefore never causes a write back.
 
 substitutions:
   name: mxr-heater
@@ -24,17 +23,11 @@ esphome:
     priority: -100
     then:
       - delay: 2s
-      - lambda: id(dp_suppress) = true;
-      - select.set:
-          id: mode_sel
-          option: !lambda |-
-            if (id(g_mode) == 1) return std::string("Manual");
-            if (id(g_mode) == 2) return std::string("Auto");
-            return std::string("Oil prime");
-      - select.set:
-          id: gear_sel
-          option: !lambda 'return std::string("P") + std::to_string(id(g_gear));'
-      - lambda: id(dp_suppress) = false;
+      - lambda: |-
+          id(mode_sel).publish_state(
+            id(g_mode) == 0 ? "Manual" : (id(g_mode) == 1 ? "Auto" : "Oil prime"));
+          id(gear_sel).publish_state(std::string("P") + std::to_string(id(g_gear) + 1));
+          id(setpoint_n).publish_state((float) id(g_setpoint));
 
 esp32:
   board: esp32dev
@@ -46,7 +39,7 @@ esp32:
 
 logger:
   baud_rate: 115200
-  level: DEBUG
+  level: INFO
 
 api:
   encryption:
@@ -54,56 +47,51 @@ api:
 
 ota:
   - platform: esphome
-    password: !secret ota_password
+    password: *** ota_password
 
 web_server:
   port: 80
 
 wifi:
   ssid: !secret wifi_ssid
-  password: !secret wifi_password
+  password: *** wifi_password
   ap:
     ssid: "MXR Fallback Hotspot"
-    password: !secret wifi_password
+    password: *** wifi_password
 
 captive_portal:
 
 # ------------------------------------------------------------------ Globals ---
 globals:
-  - id: dp_suppress
+  - id: g_power
     type: bool
     restore_value: false
     initial_value: 'false'
 
-  - id: g_mode
+  - id: g_setpoint
     type: int
     restore_value: false
-    initial_value: '1'
+    initial_value: '20'
 
-  - id: g_gear
+  - id: g_mode            # 0 Manual, 1 Auto, 2 Oil prime (Tuya encoding)
     type: int
     restore_value: false
-    initial_value: '1'
+    initial_value: '0'
 
-  - id: g_mode_before_prime
+  - id: g_gear            # 0..4  (P1..P5)
     type: int
     restore_value: false
-    initial_value: '1'
+    initial_value: '0'
 
   - id: prime_remaining
     type: int
     restore_value: false
     initial_value: '0'
 
-  - id: pending_val
+  - id: prime_prev_mode
     type: int
     restore_value: false
     initial_value: '0'
-
-  - id: mb_suppress
-    type: bool
-    restore_value: false
-    initial_value: 'false'
 
 # ---------------------------------------------------------------- Scripts ----
 script:
@@ -131,18 +119,16 @@ script:
           for (uint8_t i = 0; i < n; i++) sum += f[i];
           f[n++] = sum;
 
-          id(dp_suppress) = true;
           id(heater_uart).write_array(f, n);
           id(heater_uart).flush();
-          id(dp_suppress) = false;
-          ESP_LOGI("tuya", "TX DP%d type%d val%d", dp, type, val);
+          ESP_LOGI("tuya", "TX DP%d = %d", dp, val);
 
   - id: prime
     parameters:
       seconds: int
     then:
       - lambda: |-
-          id(g_mode_before_prime) = id(g_mode);
+          id(prime_prev_mode) = id(g_mode);
           id(g_mode) = 2;
           id(prime_remaining) = seconds;
       - script.execute:
@@ -160,29 +146,25 @@ script:
           condition:
             lambda: 'return id(g_mode) == 2;'
           then:
-            - lambda: 'id(g_mode) = id(g_mode_before_prime);'
+            - lambda: 'id(g_mode) = id(prime_prev_mode);'
             - script.execute:
                 id: send_dp
                 dp: 4
                 type: 4
-                val: !lambda 'return id(g_mode_before_prime) == 1 ? 0 : 1;'
+                val: !lambda 'return id(prime_prev_mode);'
 
-# ------------------------------------------------------------------- Tuya ----
+# -------------------------------------------------------------------- UART ---
 uart:
   - id: heater_uart
     rx_pin: GPIO16
     tx_pin: GPIO17
     baud_rate: 9600
-    debug:
-      direction: BOTH
-      dummy_receiver: false
-      after:
-        delimiter: [0x55]
 
   - id: modbus_uart
     rx_pin: GPIO25
     baud_rate: 9600
 
+# -------------------------------------------------------------------- Tuya ---
 tuya:
   uart_id: heater_uart
   on_datapoint_update:
@@ -190,41 +172,36 @@ tuya:
       datapoint_type: bool
       then:
         - lambda: |-
-            if (!id(dp_suppress)) id(power_sw).publish_state(x);
+            id(g_power) = x;
+            id(power_sw).publish_state(x);
             id(power_state).publish_state(x);
 
     - sensor_datapoint: 2
       datapoint_type: int
       then:
         - lambda: |-
-            if (id(dp_suppress)) return;
-            id(mb_suppress) = true;
+            id(g_setpoint) = (int) x;
             id(setpoint_n).publish_state((float) x);
-            id(mb_suppress) = false;
-
-    - sensor_datapoint: 4
-      datapoint_type: enum
-      then:
-        - lambda: |-
-            id(g_mode) = (x == 0) ? 1 : (x == 1 ? 2 : 0);
-            if (!id(dp_suppress)) {
-              id(mode_sel).publish_state(
-                id(g_mode) == 1 ? "Manual" : (id(g_mode) == 2 ? "Auto" : "Oil prime"));
-            }
-
-    - sensor_datapoint: 5
-      datapoint_type: enum
-      then:
-        - lambda: |-
-            id(g_gear) = (int) x + 1;
-            if (!id(dp_suppress)) {
-              id(gear_sel).publish_state(std::string("P") + std::to_string(id(g_gear)));
-            }
 
     - sensor_datapoint: 3
       datapoint_type: int
       then:
         - lambda: id(current_temp).publish_state(x);
+
+    - sensor_datapoint: 4
+      datapoint_type: enum
+      then:
+        - lambda: |-
+            id(g_mode) = (int) x;
+            id(mode_sel).publish_state(
+              id(g_mode) == 0 ? "Manual" : (id(g_mode) == 1 ? "Auto" : "Oil prime"));
+
+    - sensor_datapoint: 5
+      datapoint_type: enum
+      then:
+        - lambda: |-
+            id(g_gear) = (int) x;
+            id(gear_sel).publish_state(std::string("P") + std::to_string(id(g_gear) + 1));
 
     - sensor_datapoint: 11
       datapoint_type: enum
@@ -254,7 +231,7 @@ tuya:
             id(fault_code).publish_state((float) code);
             id(fault_active).publish_state(code != 0);
 
-# --------------------------------------------------------------- Entities ----
+# ---------------------------------------------------------------- Entities ---
 switch:
   - platform: template
     name: "Heater Power"
@@ -285,13 +262,14 @@ number:
     unit_of_measurement: "°C"
     on_value:
       - lambda: |-
-          if (id(dp_suppress) || id(mb_suppress)) return;
-          id(pending_val) = (int) x;
+          int v = (int) x;
+          if (v == id(g_setpoint)) return;
+          id(g_setpoint) = v;
       - script.execute:
           id: send_dp
           dp: 2
           type: 2
-          val: !lambda 'return id(pending_val);'
+          val: !lambda 'return id(g_setpoint);'
 
   - platform: template
     name: "Prime Duration"
@@ -312,15 +290,14 @@ select:
     initial_option: "Manual"
     on_value:
       - lambda: |-
-          if (id(dp_suppress)) return;
           int v = (x == "Manual") ? 0 : (x == "Auto" ? 1 : 2);
-          id(g_mode) = (v == 0) ? 1 : (v == 1 ? 2 : 0);
-          id(pending_val) = v;
+          if (v == id(g_mode)) return;
+          id(g_mode) = v;
       - script.execute:
           id: send_dp
           dp: 4
           type: 4
-          val: !lambda 'return id(pending_val);'
+          val: !lambda 'return id(g_mode);'
 
   - platform: template
     name: "Gear"
@@ -330,14 +307,14 @@ select:
     initial_option: "P1"
     on_value:
       - lambda: |-
-          if (id(dp_suppress)) return;
-          id(g_gear) = x[1] - '0';
-          id(pending_val) = id(g_gear) - 1;
+          int g = x[1] - '0' - 1;
+          if (g == id(g_gear)) return;
+          id(g_gear) = g;
       - script.execute:
           id: send_dp
           dp: 5
           type: 4
-          val: !lambda 'return id(pending_val);'
+          val: !lambda 'return id(g_gear);'
 
 button:
   - platform: template
@@ -354,12 +331,12 @@ button:
     on_press:
       - lambda: 'id(prime_remaining) = 0;'
       - script.stop: prime
-      - lambda: 'if (id(g_mode) == 2) id(g_mode) = id(g_mode_before_prime);'
+      - lambda: 'if (id(g_mode) == 2) id(g_mode) = id(prime_prev_mode);'
       - script.execute:
           id: send_dp
           dp: 4
           type: 4
-          val: !lambda 'return id(g_mode_before_prime) == 1 ? 0 : 1;'
+          val: !lambda 'return id(prime_prev_mode);'
 
 sensor:
   - platform: template
@@ -408,7 +385,6 @@ interval:
           }
           if (buf.empty() || millis() - last <= 20) return;
 
-          // 01 10 30 00 00 04 08 | gear/mode/power | setpoint+16 | ...
           for (size_t i = 0; i + 16 < buf.size(); i++) {
             if (buf[i] == 0x01 && buf[i+1] == 0x10 &&
                 buf[i+2] == 0x30 && buf[i+3] == 0x00 &&
@@ -421,13 +397,11 @@ interval:
               uint8_t code = (m >> 1) & 0x03;
               int temp     = (int) buf[i+8] - 16;
 
-              const char *ms = (code == 0) ? "Auto" : (code == 1 ? "Oil prime" : "Manual");
-              ESP_LOGI("modbus", "gear=P%u mode=%s power=%s setpoint=%dC",
-                       gear, ms, power ? "ON" : "OFF", temp);
+              ESP_LOGD("modbus", "gear=P%u mode=%u power=%s setpoint=%dC",
+                       gear, code, power ? "ON" : "OFF", temp);
 
-              id(mb_suppress) = true;
+              id(g_setpoint) = temp;
               id(setpoint_n).publish_state((float) temp);
-              id(mb_suppress) = false;
               break;
             }
           }
