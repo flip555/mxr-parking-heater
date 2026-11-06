@@ -102,18 +102,20 @@ script:
       val: int
     then:
       - lambda: |-
+          uint8_t vlen = (type == 2) ? 4 : 1;      // value DPs carry 4 bytes
+          uint16_t plen = 4 + vlen;                // dp + type + len(2) + data
           uint8_t f[16];
           uint8_t n = 0;
           f[n++] = 0x55; f[n++] = 0xAA;
           f[n++] = 0x00; f[n++] = 0x06;
-          uint16_t len = 5;
-          f[n++] = (len >> 8) & 0xFF;
-          f[n++] = len & 0xFF;
+          f[n++] = (plen >> 8) & 0xFF;
+          f[n++] = plen & 0xFF;
           f[n++] = dp;
           f[n++] = type;
           f[n++] = 0x00;
-          f[n++] = 0x01;
-          f[n++] = val & 0xFF;
+          f[n++] = vlen;
+          for (uint8_t i = 0; i < vlen; i++)
+            f[n++] = (val >> (8 * (vlen - 1 - i))) & 0xFF;
 
           uint8_t sum = 0;
           for (uint8_t i = 0; i < n; i++) sum += f[i];
