@@ -1,0 +1,324 @@
+# MXR parking heater — Tier 0, RF control + Modbus state (ESP32)
+#
+# No desoldering, no BT3L removal. The controller's 433 MHz remote protocol is
+# replayed from the ESP; the controller's own Modbus mirror supplies state.
+#
+# Wiring:
+#   GND        -> GND
+#   GPIO4      -> FS1000A DATA (VCC 5V, 17 cm antenna)
+#   GPIO25 RX  -> Modbus data pin
+#
+# Not available in this tier (they only exist on the Tuya UART):
+#   - mode switching (the remote has no mode button)
+#   - fault codes (DP21) and work state (DP11)
+#   - current temperature (DP3)
+#
+# Control granularity is the remote's: on, off, up, down. In Manual mode
+# up/down change GEAR; in Auto they change SETPOINT.
+
+substitutions:
+  name: mxr-heater
+  friendly: MXR Heater
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly}
+  on_boot:
+    priority: -100
+    then:
+      - delay: 2s
+      - script.execute: rf_rebuild
+      - lambda: id(state_suppress) = false;
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    advanced:
+      minimum_chip_revision: "3.1"
+      sram1_as_iram: true
+
+logger:
+  baud_rate: 115200
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+web_server:
+  port: 80
+
+wifi:
+  ssid: "HOUSE"
+  password: !secret wifi_password
+  manual_ip:
+    gateway: 172.20.1.1
+    subnet: 255.255.0.0
+    static_ip: 172.20.1.230
+  ap:
+    ssid: "MXR Fallback Hotspot"
+    password: !secret wifi_password
+
+captive_portal:
+
+# ------------------------------------------------------------------- Key ID ---
+text:
+  - platform: template
+    name: "Keyfob ID"
+    id: rf_id_text
+    optimistic: true
+    min_length: 20
+    max_length: 20
+    mode: text
+    icon: mdi:key-variant
+    on_value:
+      - lambda: |-
+          if (x.size() != 20 || x.find_first_not_of("01") != std::string::npos) {
+            ESP_LOGW("rf", "Rejected - needs exactly 20 bits of 0/1");
+            return;
+          }
+          uint32_t n = 0;
+          for (char c : x) n = (n << 1) | (c == '1' ? 1 : 0);
+          if (n == 0) {
+            ESP_LOGW("rf", "Rejected - all zeros");
+            return;
+          }
+          id(rf_id_num) = n;
+          ESP_LOGI("rf", "Saved ID 0x%05X", n);
+      - script.execute: rf_rebuild
+
+# ------------------------------------------------------------------ Globals ---
+globals:
+  - id: rf_id_num
+    type: uint32_t
+    restore_value: true
+    initial_value: '0'
+
+  - id: rf_on_code
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: rf_off_code
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: rf_up_code
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: rf_down_code
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: rf_last_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: state_suppress     # blocks entity writes while Modbus updates them
+    type: bool
+    restore_value: false
+    initial_value: 'true'
+
+  - id: g_setpoint
+    type: float
+    restore_value: false
+    initial_value: '0'
+
+# ---------------------------------------------------------------- Scripts ----
+script:
+  - id: rf_rebuild
+    then:
+      - lambda: |-
+          if (id(rf_id_num) == 0) {
+            ESP_LOGW("rf", "No keyfob ID set");
+            return;
+          }
+          std::string s;
+          for (int i = 19; i >= 0; i--) s += ((id(rf_id_num) >> i) & 1) ? '1' : '0';
+          id(rf_on_code)   = s + "0010";
+          id(rf_off_code)  = s + "1000";
+          id(rf_up_code)   = s + "0001";
+          id(rf_down_code) = s + "0100";
+          id(rf_id_text).publish_state(s);
+          ESP_LOGI("rf", "Keyfob ID %s", s.c_str());
+
+  # which: 0 = on, 1 = off, 2 = up, 3 = down
+  - id: rf_send
+    parameters:
+      which: int
+    then:
+      - lambda: |-
+          uint32_t now = millis();
+          if (now - id(rf_last_ms) < 600) return;
+          id(rf_last_ms) = now;
+      - remote_transmitter.transmit_raw:
+          carrier_frequency: 433.92MHz
+          code: !lambda |-
+            std::string s;
+            if      (which == 0) s = id(rf_on_code);
+            else if (which == 1) s = id(rf_off_code);
+            else if (which == 2) s = id(rf_up_code);
+            else                 s = id(rf_down_code);
+            std::vector<int32_t> v;
+            if (s.size() != 24) return v;
+            v.push_back(390); v.push_back(-10300);
+            for (char c : s) {
+              if (c == '1') { v.push_back(1060); v.push_back(-260); }
+              else          { v.push_back(400);  v.push_back(-930); }
+            }
+            return v;
+          repeat: { times: 6, wait_time: 5ms }
+      - delay: 150ms
+      - remote_transmitter.transmit_raw:
+          carrier_frequency: 433.92MHz
+          code: !lambda |-
+            std::string s;
+            if      (which == 0) s = id(rf_on_code);
+            else if (which == 1) s = id(rf_off_code);
+            else if (which == 2) s = id(rf_up_code);
+            else                 s = id(rf_down_code);
+            std::vector<int32_t> v;
+            if (s.size() != 24) return v;
+            v.push_back(390); v.push_back(-10300);
+            for (char c : s) {
+              if (c == '1') { v.push_back(1060); v.push_back(-260); }
+              else          { v.push_back(400);  v.push_back(-930); }
+            }
+            return v;
+          repeat: { times: 6, wait_time: 5ms }
+
+# --------------------------------------------------------------- Entities ----
+switch:
+  - platform: template
+    name: "Heater Power"
+    id: power_sw
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - script.execute:
+          id: rf_send
+          which: 0
+    turn_off_action:
+      - script.execute:
+          id: rf_send
+          which: 1
+
+button:
+  - platform: template
+    name: "Generate Keyfob ID"
+    icon: mdi:dice-5
+    on_press:
+      - lambda: |-
+          std::string s;
+          for (int i = 0; i < 20; i++) s += (esp_random() & 1) ? '1' : '0';
+          id(rf_id_text).publish_state(s);
+          ESP_LOGI("rf", "New ID %s - write it down", s.c_str());
+
+  - platform: template
+    name: "Up"
+    icon: mdi:chevron-up
+    on_press:
+      - script.execute:
+          id: rf_send
+          which: 2
+
+  - platform: template
+    name: "Down"
+    icon: mdi:chevron-down
+    on_press:
+      - script.execute:
+          id: rf_send
+          which: 3
+
+sensor:
+  - platform: template
+    name: "Setpoint"
+    id: setpoint
+    unit_of_measurement: "°C"
+    accuracy_decimals: 0
+    update_interval: never
+
+text_sensor:
+  - platform: template
+    name: "Mode"
+    id: mode_text
+    icon: mdi:thermostat
+    update_interval: never
+
+  - platform: template
+    name: "Gear"
+    id: gear_text
+    icon: mdi:fan
+    update_interval: never
+
+binary_sensor:
+  - platform: template
+    name: "Power State"
+    id: power_state
+    device_class: running
+    update_interval: never
+
+# ------------------------------------------------------------------ Modbus ---
+uart:
+  - id: modbus_uart
+    rx_pin: GPIO25
+    baud_rate: 9600
+
+remote_transmitter:
+  id: rf_tx
+  pin: GPIO4
+  carrier_duty_percent: 100%
+  non_blocking: true
+
+interval:
+  - interval: 25ms
+    then:
+      - lambda: |-
+          static std::vector<uint8_t> buf;
+          static uint32_t last = 0;
+          uint8_t b;
+          while (id(modbus_uart).available() > 0 && id(modbus_uart).read_byte(&b)) {
+            buf.push_back(b);
+            last = millis();
+          }
+          if (buf.empty() || millis() - last <= 20) return;
+
+          // 01 10 30 00 00 04 08 | gear/mode/power | setpoint+16 | ...
+          for (size_t i = 0; i + 16 < buf.size(); i++) {
+            if (buf[i] == 0x01 && buf[i+1] == 0x10 &&
+                buf[i+2] == 0x30 && buf[i+3] == 0x00 &&
+                buf[i+4] == 0x00 && buf[i+5] == 0x04 && buf[i+6] == 0x08) {
+
+              uint8_t st   = buf[i+7];
+              uint8_t gear = (st >> 4) & 0x0F;
+              uint8_t m    = st & 0x0F;
+              bool power   = (m & 0x01) != 0;
+              uint8_t code = (m >> 1) & 0x03;
+              int temp     = (int) buf[i+8] - 16;
+
+              const char *ms = (code == 0) ? "Auto" : (code == 1 ? "Oil prime" : "Manual");
+              ESP_LOGI("modbus", "gear=P%u mode=%s power=%s setpoint=%dC",
+                       gear, ms, power ? "ON" : "OFF", temp);
+
+              id(state_suppress) = true;
+              id(power_sw).publish_state(power);
+              id(power_state).publish_state(power);
+              id(mode_text).publish_state(ms);
+              id(gear_text).publish_state(std::string("P") + std::to_string(gear));
+              id(setpoint).publish_state((float) temp);
+              id(state_suppress) = false;
+              break;
+            }
+          }
+
+          buf.clear();
