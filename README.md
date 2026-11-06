@@ -12,6 +12,17 @@ so you get real control *and* real telemetry, entirely on your own network.
 
 ---
 
+## The controller
+
+![MXR controller](docs/images/mxr-controller.png)
+
+Five keys — on/off, up, OK, down, settings. On/off and up/down are reachable from
+this project; OK and settings are panel-only. See the
+[controller page](https://github.com/flip555/mxr-parking-heater/wiki/Controller)
+for display icons, connectors and the 3.3 V wiring.
+
+---
+
 ## What you get
 
 **Control**
