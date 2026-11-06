@@ -19,15 +19,9 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly}
-  on_boot:
-    priority: -100
-    then:
-      - delay: 2s
-      - lambda: |-
-          id(mode_sel).publish_state(
-            id(g_mode) == 0 ? "Manual" : (id(g_mode) == 1 ? "Auto" : "Oil prime"));
-          id(gear_sel).publish_state(std::string("P") + std::to_string(id(g_gear) + 1));
-          id(setpoint_n).publish_state((float) id(g_setpoint));
+  # NOTE: deliberately no on_boot publishes. Publishing an entity whose
+  # on_value transmits issues a command, which rewrites the controller's
+  # settings on every reboot. Entities populate from the first DP report.
 
 esp32:
   board: esp32dev
@@ -263,15 +257,21 @@ number:
     step: 1
     unit_of_measurement: "°C"
     on_value:
-      - lambda: |-
-          int v = (int) x;
-          if (v == id(g_setpoint)) return;
-          id(g_setpoint) = v;
-      - script.execute:
-          id: send_dp
-          dp: 2
-          type: 2
-          val: !lambda 'return id(g_setpoint);'
+      # `return` inside the lambda does NOT skip the next list item, so the
+      # send must live inside an if-condition, never after a bare lambda.
+      - if:
+          condition:
+            lambda: |-
+              int v = (int) x;
+              if (v == id(g_setpoint)) return false;
+              id(g_setpoint) = v;
+              return true;
+          then:
+            - script.execute:
+                id: send_dp
+                dp: 2
+                type: 2
+                val: !lambda 'return id(g_setpoint);'
 
   - platform: template
     name: "Prime Duration"
@@ -291,15 +291,19 @@ select:
     options: ["Manual", "Auto", "Oil prime"]
     initial_option: "Manual"
     on_value:
-      - lambda: |-
-          int v = (x == "Manual") ? 0 : (x == "Auto" ? 1 : 2);
-          if (v == id(g_mode)) return;
-          id(g_mode) = v;
-      - script.execute:
-          id: send_dp
-          dp: 4
-          type: 4
-          val: !lambda 'return id(g_mode);'
+      - if:
+          condition:
+            lambda: |-
+              int v = (x == "Manual") ? 0 : (x == "Auto" ? 1 : 2);
+              if (v == id(g_mode)) return false;
+              id(g_mode) = v;
+              return true;
+          then:
+            - script.execute:
+                id: send_dp
+                dp: 4
+                type: 4
+                val: !lambda 'return id(g_mode);'
 
   - platform: template
     name: "Gear"
@@ -308,15 +312,21 @@ select:
     options: ["P1", "P2", "P3", "P4", "P5"]
     initial_option: "P1"
     on_value:
-      - lambda: |-
-          int g = x[1] - '0' - 1;
-          if (g == id(g_gear)) return;
-          id(g_gear) = g;
-      - script.execute:
-          id: send_dp
-          dp: 5
-          type: 4
-          val: !lambda 'return id(g_gear);'
+      - if:
+          condition:
+            lambda: |-
+              if (x.size() < 2) return false;
+              int g = x[1] - '0' - 1;
+              if (g < 0 || g > 4) return false;
+              if (g == id(g_gear)) return false;
+              id(g_gear) = g;
+              return true;
+          then:
+            - script.execute:
+                id: send_dp
+                dp: 5
+                type: 4
+                val: !lambda 'return id(g_gear);'
 
 button:
   - platform: template
