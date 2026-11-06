@@ -54,16 +54,16 @@ for display icons, connectors and the 3.3 V wiring.
 
 ---
 
-## Four ways to connect
+## Three ways to connect
 
-| | **Tier 0 — RF** | **Tier 1 — Monitor** | **Tier 2 — Control** | **Tier 3 — DOUT** |
-|---|---|---|---|---|
-| Soldering | none | none | remove the BT3L | one wire to DOUT |
-| Wires | 3 + RF module | 3 | 4 | 3 |
-| Control from HA | yes, coarse | no | yes, precise | yes, coarse |
-| Mode switching | no | no | **yes** | no |
-| State + telemetry | yes | yes | yes | yes |
-| Hardware | ESP32 + FS1000A | D1 mini is enough | ESP32 | ESP32 |
+| | **Tier 0 — RF** | **Tier 1 — Monitor** | **Tier 2 — Control** |
+|---|---|---|---|
+| Soldering | none | none | remove the BT3L |
+| Wires | 3 + RF module | 3 | 4 |
+| Control from HA | yes, coarse | no | yes, precise |
+| Mode switching | no | no | **yes** |
+| State + telemetry | yes | yes | yes |
+| Hardware | ESP32 + FS1000A | D1 mini is enough | ESP32 |
 
 - **Tier 0** — replay the remote's own 433 MHz frames. No soldering, but the
   remote only offers on/off and up/down, so control is coarse and mode is
@@ -71,9 +71,6 @@ for display icons, connectors and the 3.3 V wiring.
 - **Tier 1** — listen on the Modbus mirror. Read-only, one data wire.
 - **Tier 2** — remove the BT3L and drive the Tuya UART. Full control including
   mode changes and gear.
-- **Tier 3** — the same frames as Tier 0, injected as a wire into the receiver's
-  DOUT pin instead of transmitted.
-
 Start with Tier 1 to prove the wiring, then move to Tier 0 or Tier 2 depending on
 whether you want control without opening the case.
 
@@ -90,7 +87,6 @@ whether you want control without opening the case.
    | 0 — RF | `esphome/tier0-rf-modbus.yaml` |
    | 1 — Monitor | `esphome/tier1-monitor.yaml` |
    | 2 — Control | `esphome/tier2-control.yaml` |
-   | 3 — DOUT | `esphome/tier3-dout.yaml` |
 
 4. **Add it** — the device appears in Home Assistant via ESPHome.
 
@@ -103,7 +99,6 @@ Full instructions, photos and pitfalls: **[the wiki](https://github.com/flip555/
 | [Tier 0 — RF](https://github.com/flip555/mxr-parking-heater/wiki/Tier-0-RF) | 433 MHz replay, keyfob IDs |
 | [Tier 1 — Monitor](https://github.com/flip555/mxr-parking-heater/wiki/Tier-1-Monitor) | three wires, no soldering |
 | [Tier 2 — Control](https://github.com/flip555/mxr-parking-heater/wiki/Tier-2-Control) | module removal and full control |
-| [Tier 3 — DOUT](https://github.com/flip555/mxr-parking-heater/wiki/Tier-3-DOUT) | frames injected as a wire |
 | [Troubleshooting](https://github.com/flip555/mxr-parking-heater/wiki/Troubleshooting) | silent bus, resets, brownouts |
 | [FAQ](https://github.com/flip555/mxr-parking-heater/wiki/FAQ) | scope, safety, why it works this way |
 
@@ -113,7 +108,7 @@ Full instructions, photos and pitfalls: **[the wiki](https://github.com/flip555/
 
 - MaXpeedingRods / MXR Tuya parking heater (product key `vmdizama`)
 - ESP32 (Tier 0, 2, 3) or ESP8266 / D1 mini (Tier 1 monitor)
-- FS1000A 433 MHz transmitter (Tier 0), 1 kΩ resistor (Tier 3)
+- FS1000A 433 MHz transmitter (Tier 0)
 - ESPHome 2025.x or newer
 - Home Assistant, if you want the entities — the firmware runs standalone too
 
