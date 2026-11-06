@@ -197,7 +197,10 @@ tuya:
       datapoint_type: int
       then:
         - lambda: |-
-            if (!id(dp_suppress)) id(setpoint).publish_state(x);
+            if (id(dp_suppress)) return;
+            id(mb_suppress) = true;
+            id(setpoint_n).publish_state((float) x);
+            id(mb_suppress) = false;
 
     - sensor_datapoint: 4
       datapoint_type: enum
