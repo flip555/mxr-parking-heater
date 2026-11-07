@@ -9,7 +9,7 @@ enter into KiCad or EasyEDA; the netlist, BOM and layout rules are the design.
 
 | Item | Value |
 |---|---|
-| Board size | 60 × 40 mm (fits the controller compartment) |
+| Board size | 70 × 45 mm |
 | Layers | 2 (top signal, bottom ground pour) |
 | Thickness | 1.6 mm |
 | Copper | 1 oz (35 µm) |
@@ -17,7 +17,7 @@ enter into KiCad or EasyEDA; the netlist, BOM and layout rules are the design.
 | Min clearance | 0.2 mm (0.3 mm on 3.3 V) |
 | Vias | 0.3 mm drill / 0.6 mm pad |
 | Surface finish | HASL lead-free |
-| Module | ESP32-C3-MINI-1-N4 (or `-1U` for external antenna) |
+| Module | ESP32-C3-WROOM-02 (or `-02U` for external antenna) |
 
 ### Track widths
 
@@ -147,6 +147,25 @@ Rules:
 
 Standard 2-layer, no special requirements. Order 5 boards; the BOM is under £8 in
 single quantities.
+
+## Generated KiCad project
+
+`design/kicad/` contains a generated, validated project:
+
+| File | State |
+|---|---|
+| `mxr-bridge.kicad_sch` | **validated** — kicad-cli exports a netlist with all nets |
+| `mxr-bridge.kicad_pcb` | outline, 31 footprints placed, nets assigned, GND zone |
+| `mxr-bridge.zip` | the above, zipped for EasyEDA Pro import |
+
+**Not finished:** routing and courtyard tidy-up. The board is placed, not routed —
+DRC reports unconnected items and some courtyard overlaps. Open it in KiCad and
+route, or say the word and I'll continue.
+
+Note: the module changed to **WROOM-02** because that is what KiCad ships a symbol
+and footprint for; the MINI-1 needs a custom footprint. The pin map is unchanged.
+
+---
 
 **Assembly order** (hand-solder friendly):
 
